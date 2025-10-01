@@ -1,0 +1,23 @@
+{
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "prisma:migrate": "npx prisma migrate dev --name init",
+    "prisma:generate": "npx prisma generate",
+    "prisma:seed": "node prisma/seed.js",
+    "simulate": "node run-full-simulation.js",
+    "cleanup": "node cleanup-database.js",
+    "simulate:process": "node simulate-complete-process.js"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.11.1",
+    "prisma": "^6.11.1"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "docxtemplater": "^3.65.2",
+    "express": "^5.1.0",
+    "node-fetch": "^2.7.0",
+    "pizzip": "^3.2.0"
+  }
+}

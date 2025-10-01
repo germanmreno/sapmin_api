@@ -1,0 +1,35 @@
+ACTA DE COBRANZA
+
+Correlativo: {correlativo}
+Fecha: {fecha}
+Hora: {hora}
+
+INFORMACIÓN DE LA ALIANZA:
+Nombre: {nombreAlianza}
+RIF: {rifAlianza}
+Representante Legal: {representanteLegal}
+
+INFORMACIÓN DEL ACTA DE FUNDICIÓN:
+Número de Acta: {numeroActaFundicion}
+Total Bruto: {totalBruto} gr
+
+INFORMACIÓN DE COBRANZA:
+Total a Cobrar (35%): {totalCobranza} gr
+Saldo Actual: {saldoActual} gr
+Estado: {estado}
+
+{#tienePagos}
+PAGOS REALIZADOS:
+{#pagos}
+- Arrime {nomenclatura}: {montoPagado} gr (de {totalArrime} gr total)
+{/pagos}
+
+Total Pagado: {totalPagado} gr
+{/tienePagos}
+
+{^tienePagos}
+ESTADO: Sin pagos registrados
+{/tienePagos}
+
+---
+Documento generado automáticamente por el Sistema de Gestión de Producción

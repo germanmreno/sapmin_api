@@ -1,0 +1,280 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Sector {
+  id        Int           @id @default(autoincrement())
+  nombre    String        @unique
+  alianzas  Alianza[]
+  funcionarios Funcionario[]
+  actasFundicion ActaFundicion[]
+  actasArrime ActaArrime[]
+}
+
+model Alianza {
+  id                      Int      @id @default(autoincrement())
+  nombre                  String
+  rif                     String   @unique
+  fechaConstitucion       DateTime
+  representanteLegal      String
+  estatus                 Estatus
+  poseenMinas             Boolean
+  numeroLineas            Int
+  direccionPlanta         String
+  correoEmpresa           String
+  telefonoEmpresa         String
+  capacidadInstalada      String
+  capacidadOperativa      String
+  sectorId                Int
+  sector                  Sector   @relation(fields: [sectorId], references: [id])
+  funcionarios            Funcionario[]
+  actasFundicion ActaFundicion[]
+  actasArrime ActaArrime[]
+  saldoDeuda              Float    @default(0) // Nuevo campo: saldo total pendiente de la alianza
+  movimientosSaldo        HistorialMovimientoSaldo[]
+  saldosAFavor            SaldoAFavor[]
+  elusiones               Elusion[]
+  barrasDeOro             BarraDeOro[]
+}
+
+enum Estatus {
+  ACTIVA
+  INACTIVA
+}
+
+model Funcionario {
+  id              Int      @id @default(autoincrement())
+  nombres         String
+  apellidos       String
+  tipoCedula      TipoCedula
+  cedula          Int      @unique
+  correo          String
+  telefono        String
+  estatus         EstatusFuncionario
+  sectorId        Int
+  sector          Sector   @relation(fields: [sectorId], references: [id])
+  alianzaId       Int
+  alianza         Alianza  @relation(fields: [alianzaId], references: [id])
+  actasArrime ActaArrime[]
+}
+
+enum TipoCedula {
+  V
+  E
+}
+
+enum EstatusFuncionario {
+  ACTIVO
+  VACACIONES
+  REPOSO
+  PERMISO
+}
+
+model ActaFundicion {
+  id                Int              @id @default(autoincrement())
+  sectorId          Int
+  sector            Sector           @relation(fields: [sectorId], references: [id])
+  alianzaId         Int
+  alianza           Alianza          @relation(fields: [alianzaId], references: [id])
+  rifAlianza        String
+  fechaFundicion    DateTime
+  numeroActa        String           @unique
+  barras            BarraFundida[]
+  actasCobranza     ActaCobranza[]
+}
+
+model ActaCobranza {
+  id                Int              @id @default(autoincrement())
+  actaFundicion     ActaFundicion    @relation(fields: [actaFundicionId], references: [id])
+  actaFundicionId   Int
+  correlativo       String
+  hora              DateTime
+  totalCobranza     Float
+  saldoActual       Float    @default(0) // Nuevo campo: saldo restante de la cobranza
+  estado            EstadoCobranza   @default(PENDIENTE)
+  createdAt         DateTime         @default(now())
+  documentUrl       String?          // Ruta del documento generado
+  detallesArrime    DetalleArrimeCobranza[]
+  movimientosSaldo  HistorialMovimientoSaldo[]
+  aplicacionesSaldoAFavor  AplicacionSaldoAFavor[]
+}
+
+enum EstadoCobranza {
+  PENDIENTE
+  SALDADA
+}
+
+model BarraFundida {
+  id                Int              @id @default(autoincrement())
+  actaId            Int
+  acta              ActaFundicion    @relation(fields: [actaId], references: [id])
+  numeroBarra       Int
+  totalBruto        Float
+  promedioLey       Float
+  totalFino         Float
+  precintoBarra     String
+}
+
+// Nuevo modelo para barras de oro disponibles para refundición (F2)
+model BarraDeOro {
+  id                Int              @id @default(autoincrement())
+  identificador     String           @unique // Identificador único de la barra
+  pesoBruto         Float            // Peso bruto en gramos
+  tipoLey           Float            // Pureza (ej: 999.9, 995, etc.)
+  pesoFino          Float            // Peso fino calculado (pesoBruto * tipoLey / 1000)
+  origen            String           // Origen: alianza, inventario, etc.
+  alianzaId         Int?             // Opcional: si proviene de una alianza específica
+  alianza           Alianza?         @relation(fields: [alianzaId], references: [id])
+  refundida         Boolean          @default(false) // Nueva propiedad: false por defecto
+  fechaCreacion     DateTime         @default(now())
+  observaciones     String?
+  
+  // Relación con actas de fundición F2
+  actasFundicionF2  ActaFundicionF2BarraDeOro[]
+}
+
+// Nuevo modelo para Actas de Fundición F2 (refundición)
+model ActaFundicionF2 {
+  id                Int              @id @default(autoincrement())
+  numeroActa        String           @unique // Formato F2-YYYY-MM-NNNN
+  fechaCreacion     DateTime         @default(now())
+  pesoTotalBruto    Float            // Suma de pesos brutos de las barras seleccionadas
+  pesoTotalFino     Float            // Suma de pesos finos de las barras seleccionadas
+  observaciones     String?
+  documentUrl       String?          // Ruta del documento generado
+  
+  // Relación con las barras de oro utilizadas
+  barrasUtilizadas  ActaFundicionF2BarraDeOro[]
+}
+
+// Tabla intermedia para la relación many-to-many entre ActaFundicionF2 y BarraDeOro
+model ActaFundicionF2BarraDeOro {
+  id                Int              @id @default(autoincrement())
+  actaFundicionF2Id Int
+  barraDeOroId      Int
+  
+  actaFundicionF2   ActaFundicionF2  @relation(fields: [actaFundicionF2Id], references: [id])
+  barraDeOro        BarraDeOro       @relation(fields: [barraDeOroId], references: [id])
+  
+  @@unique([actaFundicionF2Id, barraDeOroId])
+}
+
+model ActaArrime {
+  id                Int      @id @default(autoincrement())
+  sectorId          Int
+  sector            Sector   @relation(fields: [sectorId], references: [id])
+  alianzaId         Int
+  alianza           Alianza  @relation(fields: [alianzaId], references: [id])
+  funcionarioId     Int
+  funcionario       Funcionario @relation(fields: [funcionarioId], references: [id])
+  representanteLegal String
+  rifAlianza        String
+  nomenclatura      String   @unique
+  fecha             DateTime @default(now())
+  piezas            Int
+  pesoBruto         Float
+  tipoLey           String
+  pesoFino          Float
+  observaciones     String
+  barras            BarraArrime[] // Relación con las barras de arrime
+  detallesCobranza  DetalleArrimeCobranza[]
+  saldosAFavor      SaldoAFavor[]
+}
+
+model BarraArrime {
+  id                Int         @id @default(autoincrement())
+  actaArrimeId      Int
+  actaArrime        ActaArrime  @relation(fields: [actaArrimeId], references: [id])
+  numeroBarra       Int
+  pesoBruto         Float       // Peso bruto de la barra (usado para cálculos de deuda)
+  promedioLey       Float       // Ley promedio (solo referencia)
+  pesoFino          Float       // Peso fino calculado (solo referencia)
+  precintoBarra     String?     // Precinto opcional
+}
+
+model DetalleArrimeCobranza {
+  id             Int          @id @default(autoincrement())
+  actaArrimeId   Int
+  actaArrime     ActaArrime   @relation(fields: [actaArrimeId], references: [id])
+  actaCobranzaId Int
+  actaCobranza   ActaCobranza @relation(fields: [actaCobranzaId], references: [id])
+  montoAplicado  Float
+
+  @@unique([actaArrimeId, actaCobranzaId])
+}
+
+model HistorialMovimientoSaldo {
+  id            Int      @id @default(autoincrement())
+  alianzaId     Int?
+  alianza       Alianza? @relation(fields: [alianzaId], references: [id])
+  actaCobranzaId Int?
+  actaCobranza  ActaCobranza? @relation(fields: [actaCobranzaId], references: [id])
+  tipo          TipoMovimientoSaldo
+  monto         Float
+  saldoAntes    Float
+  saldoDespues  Float
+  descripcion   String?
+  fecha         DateTime @default(now())
+}
+
+model SaldoAFavor {
+  id              Int      @id @default(autoincrement())
+  alianzaId       Int
+  actaArrimeId    Int?
+  monto           Float
+  montoDisponible Float
+  descripcion     String
+  estado          EstadoSaldoAFavor @default(DISPONIBLE)
+  fechaCreacion   DateTime @default(now())
+  fechaUso        DateTime?
+
+  alianza     Alianza     @relation(fields: [alianzaId], references: [id])
+  actaArrime  ActaArrime? @relation(fields: [actaArrimeId], references: [id])
+  aplicaciones AplicacionSaldoAFavor[]
+}
+
+model AplicacionSaldoAFavor {
+  id              Int      @id @default(autoincrement())
+  saldoAFavorId   Int
+  actaCobranzaId  Int
+  montoAplicado   Float
+  fechaAplicacion DateTime @default(now())
+  descripcion     String
+
+  saldoAFavor  SaldoAFavor  @relation(fields: [saldoAFavorId], references: [id])
+  actaCobranza ActaCobranza @relation(fields: [actaCobranzaId], references: [id])
+}
+
+enum TipoMovimientoSaldo {
+  COBRANZA_GENERADA
+  APLICACION_ARRIME
+  EXCEDENTE_ARRIME
+  APLICACION_SALDO_FAVOR
+  AJUSTE_MANUAL
+  COBRANZA_SALDADA
+  OTRO
+}
+
+enum EstadoSaldoAFavor {
+  DISPONIBLE
+  PARCIALMENTE_USADO
+  AGOTADO
+}
+
+model Elusion {
+  id                     Int      @id @default(autoincrement())
+  numero                 Int      // Número secuencial de elusión en el mes para la alianza
+  fechaInicio            DateTime // Fecha de inicio de elusión
+  fechaFundicionEstimada DateTime // Fecha estimada de fundición
+  numeroLinea            String   // Número de línea operativa
+  validada               Boolean  @default(false)
+  alianza                Alianza  @relation(fields: [alianzaId], references: [id])
+  alianzaId              Int
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
