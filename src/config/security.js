@@ -2,37 +2,10 @@ const helmet = require('helmet');
 const cors = require('cors');
 
 /**
- * Configuración de CORS
+ * Configuración de CORS - Permitir todos los orígenes
  */
 const corsOptions = {
-  origin: function (origin, callback) {
-    // En producción, si el frontend se sirve desde el mismo servidor,
-    // no habrá origin o será el mismo servidor
-    if (process.env.NODE_ENV === 'production' && !origin) {
-      return callback(null, true);
-    }
-
-    // Lista de orígenes permitidos
-    const allowedOrigins = [
-      'http://localhost:3000', // React dev server
-      'http://localhost:5173', // Vite dev server
-      'http://localhost:8080', // Vue dev server
-      'http://localhost:3001', // Backend en desarrollo
-      process.env.FRONTEND_URL, // URL de producción
-      'http://172.16.2.247', // Servidor de producción
-      'http://172.16.2.247:3001', // Servidor de producción con puerto
-    ].filter(Boolean);
-
-    // Permitir requests sin origin (mobile apps, Postman, mismo servidor)
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.warn('⚠️  CORS bloqueado para origen:', origin);
-      callback(new Error('No permitido por CORS'));
-    }
-  },
+  origin: true, // Permitir todos los orígenes
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
@@ -50,30 +23,12 @@ const corsOptions = {
  * Configuración de Helmet para headers de seguridad
  */
 const helmetOptions = {
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      scriptSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'https:'],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
-    },
-  },
-  crossOriginEmbedderPolicy: false, // Deshabilitado para compatibilidad
-  // Desactivar HSTS en desarrollo/testing (solo HTTP)
-  // En producción con HTTPS, habilitar esto
-  hsts:
-    process.env.NODE_ENV === 'production' && process.env.USE_HTTPS === 'true'
-      ? {
-          maxAge: 31536000,
-          includeSubDomains: true,
-          preload: true,
-        }
-      : false,
+  contentSecurityPolicy: false, // Desactivado temporalmente para desarrollo
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: false, // Desactivar para evitar warnings
+  crossOriginResourcePolicy: false,
+  originAgentCluster: false, // Desactivar para evitar warnings
+  hsts: false, // Desactivar HSTS completamente (no forzar HTTPS)
 };
 
 /**
