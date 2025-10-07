@@ -7,6 +7,101 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ===== SISTEMA DE AUTENTICACIÓN Y RBAC =====
+
+// Usuarios del sistema
+model User {
+  id            Int      @id @default(autoincrement())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  // Relaciones
+  sessions      UserSession[]
+  userRoles     UserRole[]
+  
+  @@map("users")
+}
+
+// Sesiones y tokens de usuario
+model UserSession {
+  id            Int      @id @default(autoincrement())
+  userId        Int      @map("user_id")
+  accessToken   String   @unique @map("access_token") @db.VarChar(500)
+  refreshToken  String   @unique @map("refresh_token") @db.VarChar(500)
+  expiresAt     DateTime @map("expires_at")
+  isRevoked     Boolean  @default(false) @map("is_revoked")
+  lastActivity  DateTime @default(now()) @map("last_activity")
+  createdAt     DateTime @default(now()) @map("created_at")
+  
+  // Relaciones
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_sessions")
+}
+
+// Roles del sistema (RBAC futuro)
+model Role {
+  id            Int      @id @default(autoincrement())
+  roleName      String   @unique @map("role_name")
+  description   String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  
+  // Relaciones
+  userRoles     UserRole[]
+  rolePermissions RolePermission[]
+  
+  @@map("roles")
+}
+
+// Permisos del sistema (RBAC futuro)
+model Permission {
+  id              Int      @id @default(autoincrement())
+  permissionName  String   @map("permission_name")
+  moduleName      String   @map("module_name")
+  description     String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  
+  // Relaciones
+  rolePermissions RolePermission[]
+  
+  @@unique([permissionName, moduleName])
+  @@map("permissions")
+}
+
+// Tabla intermedia: Usuario - Rol
+model UserRole {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  roleId    Int      @map("role_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  
+  // Relaciones
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+// Tabla intermedia: Rol - Permiso
+model RolePermission {
+  id           Int        @id @default(autoincrement())
+  roleId       Int        @map("role_id")
+  permissionId Int        @map("permission_id")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  
+  // Relaciones
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
 model Sector {
   id        Int           @id @default(autoincrement())
   nombre    String        @unique
@@ -14,6 +109,8 @@ model Sector {
   funcionarios Funcionario[]
   actasFundicion ActaFundicion[]
   actasArrime ActaArrime[]
+  alianzasPequenaMineria AlianzaPequenaMineria[]
+  actasArrimePequenaMineria ActaArrimePequenaMineria[]
 }
 
 model Alianza {
@@ -61,6 +158,7 @@ model Funcionario {
   alianzaId       Int
   alianza         Alianza  @relation(fields: [alianzaId], references: [id])
   actasArrime ActaArrime[]
+  actasArrimePequenaMineria ActaArrimePequenaMineria[]
 }
 
 enum TipoCedula {
@@ -120,48 +218,62 @@ model BarraFundida {
   precintoBarra     String
 }
 
-// Nuevo modelo para barras de oro disponibles para refundición (F2)
+// ===== BARRAS DE ORO Y ACTAS F2 (MEJORADO) =====
+
+// Barras de oro disponibles para refundición (F2)
 model BarraDeOro {
   id                Int              @id @default(autoincrement())
   identificador     String           @unique // Identificador único de la barra
   pesoBruto         Float            // Peso bruto en gramos
   tipoLey           Float            // Pureza (ej: 999.9, 995, etc.)
   pesoFino          Float            // Peso fino calculado (pesoBruto * tipoLey / 1000)
-  origen            String           // Origen: alianza, inventario, etc.
-  alianzaId         Int?             // Opcional: si proviene de una alianza específica
-  alianza           Alianza?         @relation(fields: [alianzaId], references: [id])
-  refundida         Boolean          @default(false) // Nueva propiedad: false por defecto
-  fechaCreacion     DateTime         @default(now())
+  origen            String           // Origen: alianza, inventario, pequeña minería, etc.
+  precintoBarra     String?          // Precinto opcional
   observaciones     String?
+  fechaCreacion     DateTime         @default(now())
   
-  // Relación con actas de fundición F2
-  actasFundicionF2  ActaFundicionF2BarraDeOro[]
+  // ✅ MEJORA: Relación directa con Acta F2 (sin tabla intermedia)
+  refundida         Boolean          @default(false)
+  actaFundicionF2Id Int?             // NULL = no refundida, NOT NULL = refundida
+  actaFundicionF2   ActaFundicionF2? @relation(fields: [actaFundicionF2Id], references: [id])
+  
+  // Relaciones con origen (trazabilidad)
+  alianzaId         Int?
+  alianza           Alianza?         @relation(fields: [alianzaId], references: [id])
+  alianzaPequenaMineriaId Int?
+  alianzaPequenaMineria AlianzaPequenaMineria? @relation("BarrasPequenaMineria", fields: [alianzaPequenaMineriaId], references: [id])
+  actaArrimePequenaMineriaId Int?
+  actaArrimePequenaMineria ActaArrimePequenaMineria? @relation(fields: [actaArrimePequenaMineriaId], references: [id])
+  
+  // Índices para performance
+  @@index([refundida])
+  @@index([actaFundicionF2Id])
+  @@index([alianzaId])
 }
 
-// Nuevo modelo para Actas de Fundición F2 (refundición)
+// Actas de Fundición F2 (refundición)
 model ActaFundicionF2 {
   id                Int              @id @default(autoincrement())
-  numeroActa        String           @unique // Formato F2-YYYY-MM-NNNN
+  numeroActa        String           @unique // Formato: F2-YYYY-MM-NNNN (generado automáticamente)
+  fechaActa         DateTime         // Fecha de la fundición
   fechaCreacion     DateTime         @default(now())
-  pesoTotalBruto    Float            // Suma de pesos brutos de las barras seleccionadas
-  pesoTotalFino     Float            // Suma de pesos finos de las barras seleccionadas
+  
+  // Pesos y cálculos
+  pesoTotalPiezas   Float            // Suma de pesos brutos de las barras seleccionadas
+  pesoFinalBarra    Float            // Peso de la barra resultante después de fundición
+  merma             Float            // Diferencia: pesoTotalPiezas - pesoFinalBarra
+  
   observaciones     String?
   documentUrl       String?          // Ruta del documento generado
   
-  // Relación con las barras de oro utilizadas
-  barrasUtilizadas  ActaFundicionF2BarraDeOro[]
-}
-
-// Tabla intermedia para la relación many-to-many entre ActaFundicionF2 y BarraDeOro
-model ActaFundicionF2BarraDeOro {
-  id                Int              @id @default(autoincrement())
-  actaFundicionF2Id Int
-  barraDeOroId      Int
+  // ✅ MEJORA: Relación inversa simple (one-to-many)
+  piezasUtilizadas  BarraDeOro[]     // Todas las barras que tienen actaFundicionF2Id = este id
   
-  actaFundicionF2   ActaFundicionF2  @relation(fields: [actaFundicionF2Id], references: [id])
-  barraDeOro        BarraDeOro       @relation(fields: [barraDeOroId], references: [id])
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
   
-  @@unique([actaFundicionF2Id, barraDeOroId])
+  @@index([fechaActa])
+  @@index([numeroActa])
 }
 
 model ActaArrime {
@@ -277,4 +389,76 @@ model Elusion {
   alianzaId              Int
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
+}
+
+// === PEQUEÑA MINERÍA ===
+
+enum TipoPersona {
+  NATURAL
+  JURIDICA
+}
+
+model AlianzaPequenaMineria {
+  id                      Int      @id @default(autoincrement())
+  rifCedula               String   @unique // RIF o Cédula de identidad
+  nombre                  String   // Nombre de la sociedad mercantil o persona natural
+  tipoPersona             TipoPersona
+  representanteLegal      String?  // Solo para personas jurídicas
+  sectorId                Int
+  sector                  Sector   @relation(fields: [sectorId], references: [id])
+  estatus                 Estatus  @default(ACTIVA)
+  fechaRegistro           DateTime @default(now())
+  
+  // Información adicional
+  direccion               String?
+  telefono                String?
+  correo                  String?
+  
+  // Relaciones
+  actasArrime             ActaArrimePequenaMineria[]
+  barrasDeOro             BarraDeOro[] @relation("BarrasPequenaMineria")
+  
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model ActaArrimePequenaMineria {
+  id                      Int      @id @default(autoincrement())
+  numeroActa              String   // Número de acta de arrime (permite duplicados)
+  fechaArrime             DateTime // Fecha de arrime
+  montoPesoBruto          Float    // Monto arrime peso bruto
+  
+  // Relaciones
+  alianzaId               Int
+  alianza                 AlianzaPequenaMineria @relation(fields: [alianzaId], references: [id])
+  sectorId                Int
+  sector                  Sector   @relation(fields: [sectorId], references: [id])
+  
+  // Información adicional
+  observaciones           String?
+  funcionarioId           Int?
+  funcionario             Funcionario? @relation(fields: [funcionarioId], references: [id])
+  
+  // Barras registradas
+  barras                  BarraArrimePequenaMineria[]
+  
+  // Barras de oro generadas para F2
+  barrasDeOro             BarraDeOro[]
+  
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  
+  // Índice para consultas rápidas por número de acta
+  @@index([numeroActa, fechaArrime])
+}
+
+model BarraArrimePequenaMineria {
+  id                      Int      @id @default(autoincrement())
+  actaArrimeId            Int
+  actaArrime              ActaArrimePequenaMineria @relation(fields: [actaArrimeId], references: [id])
+  numeroBarra             Int
+  pesoBruto               Float    // Peso bruto de la barra
+  pesoFino                Float?   // Peso fino (opcional pero recomendado)
+  ley                     Float?   // Ley de la barra (opcional)
+  precintoBarra           String?  // Precinto opcional
 }

@@ -1,15 +1,149 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const cors = require('cors');
-const app = express();
-const prisma = new PrismaClient();
 const fs = require('fs');
 const path = require('path');
 const PizZip = require('pizzip');
 const Docxtemplater = require('docxtemplater');
 
-app.use(cors());
-app.use(express.json());
+// Importar sistema de autenticación
+const authRoutes = require('./src/routes/authRoutes');
+const { setupSecurity } = require('./src/config/security');
+const {
+  initializeSessionCleanup,
+} = require('./src/middleware/activityTracker');
+
+const app = express();
+const prisma = new PrismaClient();
+
+// Configurar seguridad (CORS, Helmet, sanitización, etc.)
+setupSecurity(app);
+
+// Middleware básico
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Rutas de autenticación (públicas)
+app.use('/auth', authRoutes);
+
+// Inicializar limpieza automática de sesiones
+initializeSessionCleanup();
+
+// Importar middleware de autenticación
+const { authenticate } = require('./src/middleware/authentication');
+
+// ===== RUTAS MODULARIZADAS =====
+// Importar rutas de Actas F2 y Barras de Oro
+const actasFundicionF2Routes = require('./routes/actasFundicionF2.routes');
+const barrasOroRoutes = require('./routes/barrasOro.routes');
+const dashboardRoutes = require('./routes/dashboard.routes');
+
+// Usar rutas modularizadas (SIN autenticación temporalmente para desarrollo)
+app.use('/dashboard', dashboardRoutes);
+app.use('/actas-fundicion-f2', actasFundicionF2Routes);
+app.use('/barras-oro', barrasOroRoutes);
+
+// Rutas de gestión de usuarios (protegidas)
+app.get('/users', authenticate, async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        userRoles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // Transformar datos para el frontend
+    const usersFormatted = users.map((user) => ({
+      id: user.id,
+      email: user.email,
+      activo: user.isActive,
+      rol: user.userRoles[0]?.role?.roleName || 'OPERATOR',
+      permisos: [],
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    }));
+
+    res.json({ users: usersFormatted });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Error al obtener usuarios' });
+  }
+});
+
+app.put('/users/:id', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { activo } = req.body;
+
+    const updateData = {};
+    if (activo !== undefined) updateData.isActive = activo;
+
+    const user = await prisma.user.update({
+      where: { id: parseInt(id) },
+      data: updateData,
+      select: {
+        id: true,
+        email: true,
+        isActive: true,
+        userRoles: {
+          include: {
+            role: true,
+          },
+        },
+      },
+    });
+
+    // Transformar para el frontend
+    const userFormatted = {
+      id: user.id,
+      email: user.email,
+      activo: user.isActive,
+      rol: user.userRoles[0]?.role?.roleName || 'OPERATOR',
+      permisos: [],
+    };
+
+    res.json({ user: userFormatted });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    res.status(500).json({ error: 'Error al actualizar usuario' });
+  }
+});
+
+app.put('/users/:id/password', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 8) {
+      return res
+        .status(400)
+        .json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+
+    const bcrypt = require('bcrypt');
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await prisma.user.update({
+      where: { id: parseInt(id) },
+      data: { passwordHash: hashedPassword },
+    });
+
+    res.json({ message: 'Contraseña actualizada exitosamente' });
+  } catch (error) {
+    console.error('Error updating password:', error);
+    res.status(500).json({ error: 'Error al actualizar contraseña' });
+  }
+});
 
 // Listar sectores
 app.get('/sectores', async (req, res) => {
@@ -1706,7 +1840,9 @@ app.post('/actas-arrime', async (req, res) => {
 });
 
 // === ACTAS DE FUNDICIÓN F2 (REFUNDICIÓN) ===
+// ⚠️ COMENTADO - Ahora usa rutas modularizadas en routes/actasFundicionF2.routes.js y routes/barrasOro.routes.js
 
+/*
 // Listar barras de oro disponibles para refundición
 app.get('/barras-oro', async (req, res) => {
   try {
@@ -1722,6 +1858,14 @@ app.get('/barras-oro', async (req, res) => {
             rif: true,
           },
         },
+        alianzaPequenaMineria: {
+          select: {
+            id: true,
+            nombre: true,
+            rifCedula: true,
+            tipoPersona: true,
+          },
+        },
       },
       orderBy: {
         fechaCreacion: 'desc',
@@ -1732,7 +1876,10 @@ app.get('/barras-oro', async (req, res) => {
     const barrasConInfo = barras.map((barra) => ({
       ...barra,
       esDeArrime: barra.origen.includes('Arrime'),
+      esDePequenaMineria: barra.origen.includes('Pequeña Minería'),
       fechaCreacionFormateada: barra.fechaCreacion.toLocaleDateString('es-VE'),
+      // Información unificada de la alianza (normal o pequeña minería)
+      alianzaInfo: barra.alianza || barra.alianzaPequenaMineria,
     }));
 
     res.json(barrasConInfo);
@@ -1979,6 +2126,653 @@ app.post('/actas-fundicion-f2/:id/generar-documento', async (req, res) => {
   } catch (error) {
     console.error('Error generando documento F2:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+*/
+// FIN SECCIÓN COMENTADA - ACTAS F2
+
+// === PEQUEÑA MINERÍA ===
+
+// Descargar template CSV para bulk upload
+app.get('/pequena-mineria/template-csv', (req, res) => {
+  try {
+    const templateContent = [
+      'RIF/CEDULA DE IDENTIDAD;NOMBRE DE LA SOCIEDAD MERCANTIL/PERSONA NATURAL;SECTOR;N° ACTA DE ARRIME;FECHA DE ARRIME;MONTO ARRIME PESO BRUTO',
+      'J316589617;AGROMINERA B.O.G., C.A.;EL CALLAO;CVM-GGP-GPM-ELCALLAO-AE-000-42-02-2025;28/2/2025;26.8',
+      'J411075949;AGROMINERA CALEIVIS 2018, C.A.;TUMEREMO;CVM-GGP-GPM-TUMEREMO-AE-000-27-02-2025;27/2/2025;10',
+      'V87654321;JUAN PEREZ;EL CALLAO 1;PM-2024-002;15/1/2024;75.25',
+      'G987654321;SOCIEDAD MINERA DEL SUR C.A.;TUMEREMO;PM-2024-003;17/1/2024;200',
+      'J556677889;COOPERATIVA MINERA UNIDOS C.A.;CALLAO;PM-2024-005;19/1/2024;125.30',
+    ].join('\n');
+
+    // Configurar headers para descarga
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="template-pequena-mineria-${new Date()
+        .toISOString()
+        .slice(0, 10)}.csv"`
+    );
+    res.setHeader('Content-Length', Buffer.byteLength(templateContent, 'utf8'));
+
+    // Agregar BOM para UTF-8 (ayuda con caracteres especiales en Excel)
+    res.write('\uFEFF');
+    res.end(templateContent);
+  } catch (error) {
+    console.error('Error generando template CSV:', error);
+    res.status(500).json({ error: 'Error al generar el template CSV' });
+  }
+});
+
+// Bulk upload de actas de arrime desde CSV
+app.post('/pequena-mineria/bulk-upload', async (req, res) => {
+  try {
+    const { csvData } = req.body;
+
+    if (!csvData || !Array.isArray(csvData)) {
+      return res.status(400).json({ error: 'Datos CSV inválidos' });
+    }
+
+    const resultados = {
+      exitosos: [],
+      errores: [],
+      alianzasCreadas: [],
+      totalProcesados: csvData.length,
+    };
+
+    // Obtener sectores existentes
+    const sectores = await prisma.sector.findMany();
+    const sectoresMap = new Map(
+      sectores.map((s) => [s.nombre.toUpperCase(), s])
+    );
+
+    for (let i = 0; i < csvData.length; i++) {
+      const fila = csvData[i];
+      const numeroFila = i + 2; // +2 porque empezamos en fila 1 y hay header
+
+      try {
+        // Validar campos requeridos
+        if (
+          !fila.rifCedula ||
+          !fila.nombre ||
+          !fila.sector ||
+          !fila.numeroActa ||
+          !fila.fechaArrime ||
+          !fila.montoPesoBruto
+        ) {
+          resultados.errores.push({
+            fila: numeroFila,
+            error: 'Campos requeridos faltantes',
+            datos: fila,
+          });
+          continue;
+        }
+
+        // Determinar tipo de persona (J o G = Jurídica, con o sin guión)
+        const rifUpper = fila.rifCedula.toUpperCase().trim();
+        // Detectar si empieza con J o G (con o sin guión: J-12345 o J12345)
+        const esJuridica = /^[JG]-?\d/.test(rifUpper);
+        const tipoPersona = esJuridica ? 'JURIDICA' : 'NATURAL';
+
+        // Buscar o mapear sector
+        let sectorNombre = fila.sector.toUpperCase().trim();
+
+        // Mapeo especial de sectores
+        if (sectorNombre.includes('CALLAO')) {
+          sectorNombre = 'EL CALLAO 1';
+        } else if (
+          sectorNombre === 'KM88' ||
+          sectorNombre.includes('KM 88') ||
+          sectorNombre.includes('KM-88')
+        ) {
+          sectorNombre = 'KM 88';
+        }
+
+        const sector = sectoresMap.get(sectorNombre);
+        if (!sector) {
+          resultados.errores.push({
+            fila: numeroFila,
+            error: `Sector "${fila.sector}" no encontrado`,
+            datos: fila,
+          });
+          continue;
+        }
+
+        // Buscar o crear alianza por RIF/Cédula
+        let alianza = await prisma.alianzaPequenaMineria.findFirst({
+          where: { rifCedula: fila.rifCedula.trim() },
+        });
+
+        if (!alianza) {
+          // Crear nueva alianza
+          alianza = await prisma.alianzaPequenaMineria.create({
+            data: {
+              rifCedula: fila.rifCedula.trim(),
+              nombre: fila.nombre.trim(),
+              tipoPersona,
+              representanteLegal: null,
+              sectorId: sector.id,
+              direccion: 'Dirección no especificada',
+              telefono: '0000-0000000',
+              correo: `contacto@${fila.rifCedula
+                .toLowerCase()
+                .replace(/[^a-z0-9]/g, '')}.com`,
+              estatus: 'ACTIVA',
+            },
+          });
+
+          resultados.alianzasCreadas.push({
+            fila: numeroFila,
+            alianza: {
+              rifCedula: alianza.rifCedula,
+              nombre: alianza.nombre,
+              tipoPersona: alianza.tipoPersona,
+            },
+          });
+        }
+
+        // Nota: Permitimos múltiples arrimes con el mismo número de acta
+        // Cada arrime es un registro independiente vinculado al mismo número de acta
+
+        // Normalizar y validar fecha de arrime
+        let fechaArrime;
+        let fechaStr = fila.fechaArrime.trim();
+
+        // Si viene en formato DD/MM/YYYY, convertir a YYYY-MM-DD
+        if (fechaStr.includes('/')) {
+          const parts = fechaStr.split('/');
+          if (parts.length === 3) {
+            const day = parts[0].padStart(2, '0');
+            const month = parts[1].padStart(2, '0');
+            const year = parts[2];
+            fechaStr = `${year}-${month}-${day}`;
+          }
+        }
+
+        fechaArrime = new Date(fechaStr);
+        if (isNaN(fechaArrime.getTime())) {
+          resultados.errores.push({
+            fila: numeroFila,
+            error: `Fecha de arrime inválida: ${fila.fechaArrime}`,
+            datos: fila,
+          });
+          continue;
+        }
+
+        // Normalizar monto: reemplazar coma por punto
+        const montoStr = fila.montoPesoBruto.toString().replace(',', '.');
+        const montoPesoBruto = parseFloat(montoStr);
+        if (isNaN(montoPesoBruto) || montoPesoBruto <= 0) {
+          resultados.errores.push({
+            fila: numeroFila,
+            error: `Monto peso bruto inválido: ${fila.montoPesoBruto}`,
+            datos: fila,
+          });
+          continue;
+        }
+
+        // Crear acta con una barra por defecto
+        const actaArrime = await prisma.actaArrimePequenaMineria.create({
+          data: {
+            numeroActa: fila.numeroActa.trim(),
+            fechaArrime,
+            montoPesoBruto,
+            alianzaId: alianza.id,
+            sectorId: sector.id,
+            observaciones: `Cargado desde CSV - Fila ${numeroFila}`,
+            barras: {
+              create: [
+                {
+                  numeroBarra: 1,
+                  pesoBruto: montoPesoBruto,
+                  pesoFino: montoPesoBruto, // Asumimos peso fino igual al bruto si no se especifica
+                  ley: 999.9, // Ley por defecto
+                  precintoBarra: null,
+                },
+              ],
+            },
+          },
+          include: {
+            alianza: true,
+            sector: true,
+            barras: true,
+          },
+        });
+
+        // Crear barra de oro para F2 vinculada al acta de arrime
+        const identificadorBarra = `PM-${fila.numeroActa.trim()}-${
+          actaArrime.id
+        }`;
+        await prisma.barraDeOro.create({
+          data: {
+            identificador: identificadorBarra,
+            pesoBruto: montoPesoBruto,
+            tipoLey: 999.9,
+            pesoFino: montoPesoBruto,
+            origen: `Pequeña Minería - ${fila.numeroActa.trim()}`,
+            alianzaPequenaMineria: {
+              connect: { id: alianza.id },
+            },
+            actaArrimePequenaMineria: {
+              connect: { id: actaArrime.id },
+            },
+            observaciones: `Barra generada automáticamente desde CSV - Acta: ${fila.numeroActa.trim()}, ID: ${
+              actaArrime.id
+            }`,
+            refundida: false,
+          },
+        });
+
+        resultados.exitosos.push({
+          fila: numeroFila,
+          acta: {
+            numeroActa: actaArrime.numeroActa,
+            alianza: actaArrime.alianza.nombre,
+            montoPesoBruto: actaArrime.montoPesoBruto,
+            fechaArrime: actaArrime.fechaArrime,
+          },
+        });
+      } catch (error) {
+        console.error(`Error procesando fila ${numeroFila}:`, error);
+        console.error('Stack trace:', error.stack);
+        console.error('Datos de la fila:', JSON.stringify(fila, null, 2));
+
+        resultados.errores.push({
+          fila: numeroFila,
+          error: error.message || 'Error desconocido',
+          errorType: error.constructor.name,
+          errorDetails: error.stack
+            ? error.stack.split('\n')[0]
+            : 'Sin detalles',
+          datos: fila,
+        });
+      }
+    }
+
+    res.json({
+      mensaje: 'Bulk upload completado',
+      resultados,
+    });
+  } catch (error) {
+    console.error('Error en bulk upload:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Listar alianzas de pequeña minería
+app.get('/pequena-mineria/alianzas', async (req, res) => {
+  try {
+    const { sectorId, page = '1', limit = '10' } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    let where = {};
+    if (sectorId) {
+      where = { sectorId: Number(sectorId) };
+    }
+
+    // Obtener total de registros
+    const total = await prisma.alianzaPequenaMineria.count({ where });
+
+    const alianzas = await prisma.alianzaPequenaMineria.findMany({
+      where,
+      include: {
+        sector: true,
+        actasArrime: {
+          orderBy: { fechaArrime: 'desc' },
+          take: 5,
+        },
+        _count: {
+          select: {
+            actasArrime: true,
+            barrasDeOro: true,
+          },
+        },
+      },
+      orderBy: { nombre: 'asc' },
+      skip,
+      take: limitNum,
+    });
+
+    // Calcular estadísticas adicionales
+    const alianzasConEstadisticas = alianzas.map((alianza) => {
+      const totalArrimes = alianza._count.actasArrime;
+      const totalBarras = alianza._count.barrasDeOro;
+      const totalArrimado = alianza.actasArrime.reduce(
+        (total, arrime) => total + arrime.montoPesoBruto,
+        0
+      );
+
+      return {
+        ...alianza,
+        estadisticas: {
+          totalArrimes,
+          totalBarras,
+          totalArrimado,
+        },
+      };
+    });
+
+    // Obtener estadísticas totales (de todas las alianzas, no solo la página)
+    const totalAlianzas = total;
+    const alianzasActivas = await prisma.alianzaPequenaMineria.count({
+      where: { ...where, estatus: 'ACTIVA' },
+    });
+    const personasNaturales = await prisma.alianzaPequenaMineria.count({
+      where: { ...where, tipoPersona: 'NATURAL' },
+    });
+    const personasJuridicas = await prisma.alianzaPequenaMineria.count({
+      where: { ...where, tipoPersona: 'JURIDICA' },
+    });
+
+    res.json({
+      data: alianzasConEstadisticas,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum),
+      },
+      estadisticas: {
+        totalAlianzas,
+        alianzasActivas,
+        personasNaturales,
+        personasJuridicas,
+      },
+    });
+  } catch (error) {
+    console.error('Error obteniendo alianzas de pequeña minería:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Obtener detalles completos de una alianza específica (sin paginación)
+app.get('/pequena-mineria/alianzas/:id/detalles', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const alianza = await prisma.alianzaPequenaMineria.findUnique({
+      where: { id: Number(id) },
+      include: {
+        sector: true,
+        actasArrime: {
+          include: {
+            barras: true,
+          },
+          orderBy: { fechaArrime: 'desc' },
+        },
+      },
+    });
+
+    if (!alianza) {
+      return res.status(404).json({ error: 'Alianza no encontrada' });
+    }
+
+    res.json(alianza);
+  } catch (error) {
+    console.error('Error obteniendo detalles de alianza:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Crear alianza de pequeña minería
+app.post('/pequena-mineria/alianzas', async (req, res) => {
+  try {
+    const {
+      rifCedula,
+      nombre,
+      tipoPersona,
+      representanteLegal,
+      sectorId,
+      direccion,
+      telefono,
+      correo,
+    } = req.body;
+
+    const alianza = await prisma.alianzaPequenaMineria.create({
+      data: {
+        rifCedula,
+        nombre,
+        tipoPersona,
+        representanteLegal:
+          tipoPersona === 'JURIDICA' ? representanteLegal : null,
+        sector: { connect: { id: Number(sectorId) } },
+        direccion,
+        telefono,
+        correo,
+      },
+      include: {
+        sector: true,
+      },
+    });
+
+    res.status(201).json(alianza);
+  } catch (error) {
+    console.error('Error creando alianza de pequeña minería:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Actualizar alianza de pequeña minería
+app.put('/pequena-mineria/alianzas/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      rifCedula,
+      nombre,
+      tipoPersona,
+      representanteLegal,
+      sectorId,
+      direccion,
+      telefono,
+      correo,
+      estatus,
+    } = req.body;
+
+    const alianza = await prisma.alianzaPequenaMineria.update({
+      where: { id: Number(id) },
+      data: {
+        rifCedula,
+        nombre,
+        tipoPersona,
+        representanteLegal:
+          tipoPersona === 'JURIDICA' ? representanteLegal : null,
+        sectorId: Number(sectorId),
+        direccion,
+        telefono,
+        correo,
+        estatus,
+      },
+      include: {
+        sector: true,
+        _count: {
+          select: {
+            actasArrime: true,
+            barrasDeOro: true,
+          },
+        },
+      },
+    });
+
+    res.json(alianza);
+  } catch (error) {
+    console.error('Error actualizando alianza de pequeña minería:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Listar actas de arrime de pequeña minería
+app.get('/pequena-mineria/actas-arrime', async (req, res) => {
+  try {
+    const { page = '1', limit = '10' } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Obtener total de registros
+    const total = await prisma.actaArrimePequenaMineria.count();
+
+    // Obtener estadísticas totales
+    const estadisticasTotales = await prisma.actaArrimePequenaMineria.aggregate(
+      {
+        _sum: {
+          montoPesoBruto: true,
+        },
+      }
+    );
+
+    // Contar actas del mes actual
+    const hoy = new Date();
+    const primerDiaMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+    const ultimoDiaMes = new Date(
+      hoy.getFullYear(),
+      hoy.getMonth() + 1,
+      0,
+      23,
+      59,
+      59
+    );
+
+    const actasDelMes = await prisma.actaArrimePequenaMineria.count({
+      where: {
+        fechaArrime: {
+          gte: primerDiaMes,
+          lte: ultimoDiaMes,
+        },
+      },
+    });
+
+    const actas = await prisma.actaArrimePequenaMineria.findMany({
+      include: {
+        alianza: true,
+        sector: true,
+        funcionario: true,
+        barras: true,
+      },
+      orderBy: { fechaArrime: 'desc' },
+      skip,
+      take: limitNum,
+    });
+
+    res.json({
+      data: actas,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        totalPages: Math.ceil(total / limitNum),
+      },
+      estadisticas: {
+        totalActas: total,
+        totalPesoBruto: estadisticasTotales._sum.montoPesoBruto || 0,
+        actasDelMes,
+      },
+    });
+  } catch (error) {
+    console.error(
+      'Error obteniendo actas de arrime de pequeña minería:',
+      error
+    );
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Crear acta de arrime de pequeña minería
+app.post('/pequena-mineria/actas-arrime', async (req, res) => {
+  try {
+    const {
+      numeroActa,
+      fechaArrime,
+      montoPesoBruto,
+      alianzaId,
+      sectorId,
+      observaciones,
+      barras,
+    } = req.body;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // Buscar funcionario activo del sector (puede ser opcional)
+      const funcionario = await tx.funcionario.findFirst({
+        where: {
+          sectorId: Number(sectorId),
+          estatus: 'ACTIVO',
+        },
+      });
+
+      // Crear acta de arrime
+      const actaArrime = await tx.actaArrimePequenaMineria.create({
+        data: {
+          numeroActa,
+          fechaArrime: new Date(fechaArrime),
+          montoPesoBruto: Number(montoPesoBruto),
+          alianza: { connect: { id: Number(alianzaId) } },
+          sector: { connect: { id: Number(sectorId) } },
+          funcionario: funcionario
+            ? { connect: { id: funcionario.id } }
+            : undefined,
+          observaciones,
+          barras: {
+            create:
+              barras?.map((barra) => ({
+                numeroBarra: Number(barra.numeroBarra),
+                pesoBruto: Number(barra.pesoBruto),
+                pesoFino: barra.pesoFino ? Number(barra.pesoFino) : null,
+                ley: barra.ley ? Number(barra.ley) : null,
+                precintoBarra: barra.precintoBarra || null,
+              })) || [],
+          },
+        },
+        include: {
+          alianza: true,
+          sector: true,
+          funcionario: true,
+          barras: true,
+        },
+      });
+
+      // CREAR BARRAS DE ORO AUTOMÁTICAMENTE PARA F2
+      if (barras && barras.length > 0) {
+        for (let i = 0; i < barras.length; i++) {
+          const barra = barras[i];
+
+          // Generar identificador único para la barra de oro
+          const identificadorBarra = `PM-${numeroActa}-B${String(
+            i + 1
+          ).padStart(2, '0')}`;
+
+          // Calcular peso fino si no se proporcionó pero hay ley
+          let pesoFino = barra.pesoFino ? Number(barra.pesoFino) : null;
+          if (!pesoFino && barra.ley) {
+            pesoFino = (Number(barra.pesoBruto) * Number(barra.ley)) / 1000;
+          }
+
+          await tx.barraDeOro.create({
+            data: {
+              identificador: identificadorBarra,
+              pesoBruto: Number(barra.pesoBruto),
+              tipoLey: barra.ley ? Number(barra.ley) : 999.9, // Valor por defecto si no se especifica
+              pesoFino: pesoFino || Number(barra.pesoBruto), // Si no hay peso fino, usar peso bruto
+              origen: `Pequeña Minería - ${numeroActa}`,
+              alianzaPequenaMineria: { connect: { id: Number(alianzaId) } },
+              observaciones: `Barra generada automáticamente del arrime de pequeña minería ${numeroActa} - Barra #${
+                i + 1
+              }${
+                barra.precintoBarra ? ` - Precinto: ${barra.precintoBarra}` : ''
+              }`,
+              refundida: false,
+            },
+          });
+        }
+      }
+
+      return actaArrime;
+    });
+
+    res.status(201).json(result);
+  } catch (error) {
+    console.error('Error creando acta de arrime de pequeña minería:', error);
+    res.status(400).json({ error: error.message });
   }
 });
 
