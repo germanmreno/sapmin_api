@@ -43,6 +43,17 @@ app.use('/dashboard', dashboardRoutes);
 app.use('/actas-fundicion-f2', actasFundicionF2Routes);
 app.use('/barras-oro', barrasOroRoutes);
 
+// ===== SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND =====
+// En producción, servir los archivos del build del frontend
+if (process.env.NODE_ENV === 'production') {
+  const frontendPath = path.join(__dirname, './dist');
+
+  // Servir archivos estáticos
+  app.use(express.static(frontendPath));
+
+  console.log('🌐 Sirviendo frontend desde:', frontendPath);
+}
+
 // Rutas de gestión de usuarios (protegidas)
 app.get('/users', authenticate, async (req, res) => {
   try {
@@ -2776,41 +2787,14 @@ app.post('/pequena-mineria/actas-arrime', async (req, res) => {
   }
 });
 
-// ===== SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND =====
-// En producción, servir los archivos del build del frontend
+// ===== CATCH-ALL ROUTE PARA REACT ROUTER (DEBE IR AL FINAL) =====
+// En producción, todas las rutas no-API deben servir index.html
 if (process.env.NODE_ENV === 'production') {
-  const frontendPath = path.join(__dirname, '../frontend/dist');
-
-  // Servir archivos estáticos
-  app.use(express.static(frontendPath));
-
-  // Todas las rutas no API deben servir index.html (para React Router)
-  app.get('*', (req, res) => {
-    // No servir index.html para rutas de API
-    if (
-      req.path.startsWith('/api') ||
-      req.path.startsWith('/auth') ||
-      req.path.startsWith('/dashboard') ||
-      req.path.startsWith('/actas-') ||
-      req.path.startsWith('/barras-') ||
-      req.path.startsWith('/alianzas') ||
-      req.path.startsWith('/sectores') ||
-      req.path.startsWith('/funcionarios') ||
-      req.path.startsWith('/users') ||
-      req.path.startsWith('/roles') ||
-      req.path.startsWith('/permissions') ||
-      req.path.startsWith('/cobranzas') ||
-      req.path.startsWith('/deudas') ||
-      req.path.startsWith('/arrimes-pequena-mineria') ||
-      req.path.startsWith('/elusiones')
-    ) {
-      return res.status(404).json({ error: 'Endpoint no encontrado' });
-    }
-
+  app.use((req, res, next) => {
+    // Si la ruta no es una API, servir index.html
+    const frontendPath = path.join(__dirname, './dist');
     res.sendFile(path.join(frontendPath, 'index.html'));
   });
-
-  console.log('🌐 Sirviendo frontend desde:', frontendPath);
 }
 
 const PORT = process.env.PORT || 3001;

@@ -6,20 +6,30 @@ const cors = require('cors');
  */
 const corsOptions = {
   origin: function (origin, callback) {
+    // En producción, si el frontend se sirve desde el mismo servidor,
+    // no habrá origin o será el mismo servidor
+    if (process.env.NODE_ENV === 'production' && !origin) {
+      return callback(null, true);
+    }
+
     // Lista de orígenes permitidos
     const allowedOrigins = [
       'http://localhost:3000', // React dev server
       'http://localhost:5173', // Vite dev server
       'http://localhost:8080', // Vue dev server
+      'http://localhost:3001', // Backend en desarrollo
       process.env.FRONTEND_URL, // URL de producción
+      'http://172.16.2.247', // Servidor de producción
+      'http://172.16.2.247:3001', // Servidor de producción con puerto
     ].filter(Boolean);
 
-    // Permitir requests sin origin (mobile apps, Postman, etc.)
+    // Permitir requests sin origin (mobile apps, Postman, mismo servidor)
     if (!origin) return callback(null, true);
 
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
+      console.warn('⚠️  CORS bloqueado para origen:', origin);
       callback(new Error('No permitido por CORS'));
     }
   },
