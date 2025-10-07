@@ -2776,7 +2776,49 @@ app.post('/pequena-mineria/actas-arrime', async (req, res) => {
   }
 });
 
+// ===== SERVIR ARCHIVOS ESTÁTICOS DEL FRONTEND =====
+// En producción, servir los archivos del build del frontend
+if (process.env.NODE_ENV === 'production') {
+  const frontendPath = path.join(__dirname, '../frontend/dist');
+
+  // Servir archivos estáticos
+  app.use(express.static(frontendPath));
+
+  // Todas las rutas no API deben servir index.html (para React Router)
+  app.get('*', (req, res) => {
+    // No servir index.html para rutas de API
+    if (
+      req.path.startsWith('/api') ||
+      req.path.startsWith('/auth') ||
+      req.path.startsWith('/dashboard') ||
+      req.path.startsWith('/actas-') ||
+      req.path.startsWith('/barras-') ||
+      req.path.startsWith('/alianzas') ||
+      req.path.startsWith('/sectores') ||
+      req.path.startsWith('/funcionarios') ||
+      req.path.startsWith('/users') ||
+      req.path.startsWith('/roles') ||
+      req.path.startsWith('/permissions') ||
+      req.path.startsWith('/cobranzas') ||
+      req.path.startsWith('/deudas') ||
+      req.path.startsWith('/arrimes-pequena-mineria') ||
+      req.path.startsWith('/elusiones')
+    ) {
+      return res.status(404).json({ error: 'Endpoint no encontrado' });
+    }
+
+    res.sendFile(path.join(frontendPath, 'index.html'));
+  });
+
+  console.log('🌐 Sirviendo frontend desde:', frontendPath);
+}
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`Servidor backend escuchando en el puerto ${PORT}`);
+  console.log(`🚀 Servidor backend escuchando en el puerto ${PORT}`);
+  console.log(`📍 Entorno: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔗 URL: http://localhost:${PORT}`);
+  if (process.env.NODE_ENV === 'production') {
+    console.log('✅ Modo producción: Sirviendo frontend integrado');
+  }
 });
