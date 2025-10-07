@@ -64,11 +64,16 @@ const helmetOptions = {
     },
   },
   crossOriginEmbedderPolicy: false, // Deshabilitado para compatibilidad
-  hsts: {
-    maxAge: 31536000,
-    includeSubDomains: true,
-    preload: true,
-  },
+  // Desactivar HSTS en desarrollo/testing (solo HTTP)
+  // En producción con HTTPS, habilitar esto
+  hsts:
+    process.env.NODE_ENV === 'production' && process.env.USE_HTTPS === 'true'
+      ? {
+          maxAge: 31536000,
+          includeSubDomains: true,
+          preload: true,
+        }
+      : false,
 };
 
 /**
