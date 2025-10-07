@@ -146,8 +146,8 @@ function timingAttackProtection(req, res, next) {
  * Configuración completa de seguridad
  */
 function setupSecurity(app) {
-  // Headers de seguridad
-  app.use(helmet(helmetOptions));
+  // DESACTIVAR HELMET TEMPORALMENTE - Causa problemas con HTTP
+  // app.use(helmet(helmetOptions));
 
   // CORS
   app.use(cors(corsOptions));
@@ -158,8 +158,8 @@ function setupSecurity(app) {
   // Logging de seguridad
   app.use(securityLogger);
 
-  // Validación de Content-Type
-  app.use(validateContentType);
+  // Validación de Content-Type (desactivada temporalmente)
+  // app.use(validateContentType);
 
   // Protección contra timing attacks
   app.use(timingAttackProtection);
@@ -167,7 +167,7 @@ function setupSecurity(app) {
   // Ocultar información del servidor
   app.disable('x-powered-by');
 
-  console.log('🛡️  Configuración de seguridad aplicada');
+  console.log('🛡️  Configuración de seguridad aplicada (Helmet desactivado)');
 }
 
 /**
